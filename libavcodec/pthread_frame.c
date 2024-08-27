@@ -185,7 +185,22 @@ static void thread_set_name(PerThreadContext *p)
  * not provide an update_thread_context method, or if the codec returns
  * before calling it.
  */
-static attribute_align_arg void *frame_worker_thread(void *arg)
+
+//For debug graph.
+__attribute__((weak)) void frame_worker_thread_start(const void* thread_ptr);
+__attribute__((weak)) void frame_worker_thread_end(const void* thread_ptr);
+__attribute__((weak)) void frame_worker_thread_start(const void* thread_ptr)
+{
+    (void)thread_ptr;
+}
+__attribute__((weak)) void frame_worker_thread_end(const void* thread_ptr)
+{
+    (void)thread_ptr;
+}
+
+//Removed "static" for debug.
+attribute_align_arg void *frame_worker_thread(void *arg);
+attribute_align_arg void *frame_worker_thread(void *arg)
 {
     PerThreadContext *p = arg;
     AVCodecContext *avctx = p->avctx;
@@ -220,7 +235,9 @@ static attribute_align_arg void *frame_worker_thread(void *arg)
 
         av_frame_unref(p->frame);
         p->got_frame = 0;
+        frame_worker_thread_start(p);
         p->result = codec->cb.decode(avctx, p->frame, &p->got_frame, p->avpkt);
+        frame_worker_thread_end(p);
 
         if ((p->result < 0 || !p->got_frame) && p->frame->buf[0])
             av_frame_unref(p->frame);
