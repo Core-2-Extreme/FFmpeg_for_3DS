@@ -6743,36 +6743,7 @@ fi
 # check for some common methods of building with pthread support
 # do this before the optional library checks as some of them require pthreads
 if ! disabled pthreads && ! enabled w32threads && ! enabled os2threads; then
-    if check_lib pthreads pthread.h pthread_join   -pthread &&
-       check_lib pthreads pthread.h pthread_create -pthread; then
-        add_cflags -pthread
-    elif check_lib pthreads pthread.h pthread_join   -pthreads &&
-         check_lib pthreads pthread.h pthread_create -pthreads; then
-        add_cflags -pthreads
-    elif check_lib pthreads pthread.h pthread_join   -ldl -pthread &&
-         check_lib pthreads pthread.h pthread_create -ldl -pthread; then
-        add_cflags -ldl -pthread
-    elif check_lib pthreads pthread.h pthread_join   -lpthreadGC2 &&
-         check_lib pthreads pthread.h pthread_create -lpthreadGC2; then
-        :
-    elif check_lib pthreads pthread.h pthread_join   -lpthread &&
-         check_lib pthreads pthread.h pthread_create -lpthread; then
-        :
-    elif check_func pthread_join && check_func pthread_create; then
-        enable pthreads
-    fi
-    check_cc pthreads "pthread.h" "static pthread_mutex_t atomic_lock = PTHREAD_MUTEX_INITIALIZER"
-
-    if enabled pthreads; then
-        check_builtin sem_timedwait semaphore.h "sem_t *s; sem_init(s,0,0); sem_timedwait(s,0); sem_destroy(s)" $pthreads_extralibs
-        check_func pthread_cancel $pthreads_extralibs
-        hdrs=pthread.h
-        if enabled pthread_np_h; then
-            hdrs="$hdrs pthread_np.h"
-        fi
-        check_lib pthread_set_name_np "$hdrs" pthread_set_name_np -lpthread
-        check_lib pthread_setname_np "$hdrs" pthread_setname_np -lpthread
-    fi
+    enable pthreads
 fi
 
 enabled  zlib && { check_pkg_config zlib zlib "zlib.h" zlibVersion ||
@@ -6837,7 +6808,7 @@ enabled libcelt           && require libcelt celt/celt.h celt_decode -lcelt0 &&
                                die "ERROR: libcelt must be installed and version must be >= 0.11.0."; }
 enabled libcaca           && require_pkg_config libcaca caca caca.h caca_create_canvas
 enabled libcodec2         && require libcodec2 codec2/codec2.h codec2_create -lcodec2
-enabled libdav1d          && require_pkg_config libdav1d "dav1d >= 0.5.0" "dav1d/dav1d.h" dav1d_version
+enabled libdav1d
 enabled libdavs2          && require_pkg_config libdavs2 "davs2 >= 1.6.0" davs2.h davs2_decoder_open
 enabled libdc1394         && require_pkg_config libdc1394 libdc1394-2 dc1394/dc1394.h dc1394_new
 enabled libdrm            && check_pkg_config libdrm libdrm xf86drm.h drmGetVersion
@@ -6993,12 +6964,7 @@ enabled libvpx            && {
 enabled libwebp           && {
     enabled libwebp_encoder      && require_pkg_config libwebp "libwebp >= 0.2.0" webp/encode.h WebPGetEncoderVersion
     enabled libwebp_anim_encoder && check_pkg_config libwebp_anim_encoder "libwebpmux >= 0.4.0" webp/mux.h WebPAnimEncoderOptionsInit; }
-enabled libx264           && require_pkg_config libx264 x264 "stdint.h x264.h" x264_encoder_encode &&
-                             require_cpp_condition libx264 x264.h "X264_BUILD >= 122" && {
-                             [ "$toolchain" != "msvc" ] ||
-                             require_cpp_condition libx264 x264.h "X264_BUILD >= 158"; } &&
-                             check_cpp_condition libx264_hdr10 x264.h "X264_BUILD >= 163" &&
-                             check_cpp_condition libx262 x264.h "X264_MPEG2"
+enabled libx264
 enabled libx265           && require_pkg_config libx265 x265 x265.h x265_api_get &&
                              require_cpp_condition libx265 x265.h "X265_BUILD >= 89"
 enabled libxavs           && require libxavs "stdint.h xavs.h" xavs_encoder_encode "-lxavs $pthreads_extralibs $libm_extralibs"
