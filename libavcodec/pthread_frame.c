@@ -187,15 +187,15 @@ static void thread_set_name(PerThreadContext *p)
  */
 
 //For debug graph.
-__attribute__((weak)) void frame_worker_thread_start(const void* thread_ptr);
-__attribute__((weak)) void frame_worker_thread_end(const void* thread_ptr);
-__attribute__((weak)) void frame_worker_thread_start(const void* thread_ptr)
+__attribute__((weak)) void frame_worker_thread_start(const void* frame_handle);
+__attribute__((weak)) void frame_worker_thread_end(const void* frame_handle);
+__attribute__((weak)) void frame_worker_thread_start(const void* frame_handle)
 {
-    (void)thread_ptr;
+    (void)frame_handle;
 }
-__attribute__((weak)) void frame_worker_thread_end(const void* thread_ptr)
+__attribute__((weak)) void frame_worker_thread_end(const void* frame_handle)
 {
-    (void)thread_ptr;
+    (void)frame_handle;
 }
 
 //Removed "static" for debug.
