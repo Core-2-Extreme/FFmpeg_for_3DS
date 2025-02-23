@@ -32,7 +32,7 @@
 #endif
 #include "url.h"
 
-#define IO_BUFFER_SIZE 32768
+#define IO_BUFFER_SIZE 32768 * 16
 
 /** @name Logging context. */
 /*@{*/
