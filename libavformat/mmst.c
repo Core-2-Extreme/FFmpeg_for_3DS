@@ -30,9 +30,9 @@
 
 #include "avformat.h"
 #include "mms.h"
-#include "internal.h"
 #include "avio_internal.h"
 #include "libavutil/intreadwrite.h"
+#include "libavutil/mem.h"
 #include "libavcodec/bytestream.h"
 #include "network.h"
 #include "url.h"
@@ -284,7 +284,7 @@ static MMSSCPacketType get_tcp_server_response(MMSTContext *mmst)
             if (length_remaining < 0
                 || length_remaining > sizeof(mms->in_buffer) - 12) {
                 av_log(mms->mms_hd, AV_LOG_ERROR,
-                       "Incoming packet length %d exceeds bufsize %"SIZE_SPECIFIER"\n",
+                       "Incoming packet length %d exceeds bufsize %zu\n",
                        length_remaining, sizeof(mms->in_buffer) - 12);
                 return AVERROR_INVALIDDATA;
             }
@@ -320,7 +320,7 @@ static MMSSCPacketType get_tcp_server_response(MMSTContext *mmst)
             if (length_remaining < 0
                 || length_remaining > sizeof(mms->in_buffer) - 8) {
                 av_log(mms->mms_hd, AV_LOG_ERROR,
-                       "Data length %d is invalid or too large (max=%"SIZE_SPECIFIER")\n",
+                       "Data length %d is invalid or too large (max=%zu)\n",
                        length_remaining, sizeof(mms->in_buffer));
                 return AVERROR_INVALIDDATA;
             }

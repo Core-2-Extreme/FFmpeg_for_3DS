@@ -31,6 +31,7 @@
 #include "libavutil/imgutils.h"
 #include "libavutil/internal.h"
 #include "libavutil/intreadwrite.h"
+#include "libavutil/mem.h"
 #include "libavcodec/get_bits.h"
 #include "demux.h"
 #include "swf.h"
@@ -173,10 +174,10 @@ static int swf_read_header(AVFormatContext *s)
         pb = swf->zpb;
 #else
         av_log(s, AV_LOG_ERROR, "zlib support is required to read SWF compressed files\n");
-        return AVERROR(EIO);
+        return AVERROR(ENOSYS);
 #endif
     } else if (tag != MKBETAG('F', 'W', 'S', 0))
-        return AVERROR(EIO);
+        return AVERROR_INVALIDDATA;
     /* skip rectangle size */
     nbits = avio_r8(pb) >> 3;
     len = (4 * nbits - 3 + 7) / 8;

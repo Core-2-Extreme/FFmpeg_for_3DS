@@ -363,7 +363,7 @@ void ff_ac3dsp_downmix(AC3DSPContext *c, float **samples, float **matrix,
             c->downmix = ac3_downmix_5_to_1_symmetric_c;
         }
 
-#if ARCH_X86
+#if ARCH_X86 && HAVE_X86ASM
         ff_ac3dsp_set_downmix_x86(c);
 #endif
     }
@@ -389,9 +389,11 @@ av_cold void ff_ac3dsp_init(AC3DSPContext *c)
     c->downmix               = NULL;
     c->downmix_fixed         = NULL;
 
-#if ARCH_ARM
+#if ARCH_AARCH64
+    ff_ac3dsp_init_aarch64(c);
+#elif ARCH_ARM
     ff_ac3dsp_init_arm(c);
-#elif ARCH_X86
+#elif ARCH_X86 && HAVE_X86ASM
     ff_ac3dsp_init_x86(c);
 #elif ARCH_MIPS
     ff_ac3dsp_init_mips(c);

@@ -47,6 +47,7 @@
 
 #include "common.h"
 #include "fixed_dsp.h"
+#include "mem.h"
 
 static void vector_fmul_add_c(int *dst, const int *src0, const int *src1, const int *src2, int len){
     int i;
@@ -164,7 +165,7 @@ AVFixedDSPContext * avpriv_alloc_fixed_dsp(int bit_exact)
 
 #if ARCH_RISCV
     ff_fixed_dsp_init_riscv(fdsp);
-#elif ARCH_X86
+#elif ARCH_X86 && HAVE_X86ASM
     ff_fixed_dsp_init_x86(fdsp);
 #endif
 

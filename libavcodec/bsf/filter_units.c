@@ -16,9 +16,10 @@
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA
  */
 
+#include <stdbool.h>
 #include <stdlib.h>
 
-#include "libavutil/common.h"
+#include "libavutil/mem.h"
 #include "libavutil/opt.h"
 
 #include "bsf.h"
@@ -34,7 +35,8 @@ typedef struct FilterUnitsContext {
 
     const char *pass_types;
     const char *remove_types;
-    enum AVDiscard discard;
+    /* enum AVDiscard, use int for AVOption */
+    int discard;
     int discard_flags;
 
     enum {
@@ -44,6 +46,7 @@ typedef struct FilterUnitsContext {
     } mode;
     CodedBitstreamUnitType *type_list;
     int nb_types;
+    bool passthrough;
 } FilterUnitsContext;
 
 
@@ -111,7 +114,7 @@ static int filter_units_filter(AVBSFContext *bsf, AVPacket *pkt)
     if (err < 0)
         return err;
 
-    if (ctx->mode == NOOP && ctx->discard <= AVDISCARD_DEFAULT)
+    if (ctx->passthrough)
         return 0;
 
     err = ff_cbs_read_packet(ctx->cbc, frag, pkt);
@@ -181,6 +184,7 @@ static int filter_units_init(AVBSFContext *bsf)
             return err;
         }
     } else if (ctx->discard == AVDISCARD_NONE) {
+        ctx->passthrough = true;
         return 0;
     }
 

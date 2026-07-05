@@ -21,6 +21,7 @@
 
 #include "libavutil/channel_layout.h"
 #include "libavutil/intreadwrite.h"
+#include "libavutil/mem.h"
 
 #include "avformat.h"
 #include "demux.h"
@@ -115,6 +116,7 @@ static int dss_read_header(AVFormatContext *s)
     DSSDemuxContext *ctx = s->priv_data;
     AVIOContext *pb = s->pb;
     AVStream *st;
+    int64_t ret64;
     int ret, version;
 
     st = avformat_new_stream(s, NULL);
@@ -163,8 +165,8 @@ static int dss_read_header(AVFormatContext *s)
 
     /* Jump over header */
 
-    if (avio_seek(pb, ctx->dss_header_size, SEEK_SET) != ctx->dss_header_size)
-        return AVERROR(EIO);
+    if ((ret64 = avio_seek(pb, ctx->dss_header_size, SEEK_SET)) < 0)
+        return (int)ret64;
 
     ctx->counter = 0;
     ctx->swap    = 0;

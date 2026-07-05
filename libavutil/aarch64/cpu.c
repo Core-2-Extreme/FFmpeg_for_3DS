@@ -20,24 +20,42 @@
 #include "libavutil/cpu_internal.h"
 #include "config.h"
 
-#if (defined(__linux__) || defined(__ANDROID__)) && HAVE_GETAUXVAL
+#if HAVE_GETAUXVAL || HAVE_ELF_AUX_INFO
 #include <stdint.h>
 #include <sys/auxv.h>
 
+#define HWCAP_AARCH64_CRC32   (1 << 7)
 #define HWCAP_AARCH64_ASIMDDP (1 << 20)
+#define HWCAP_AARCH64_SVE     (1 << 22)
+#define HWCAP2_AARCH64_SVE2   (1 << 1)
 #define HWCAP2_AARCH64_I8MM   (1 << 13)
+#define HWCAP2_AARCH64_SME    (1 << 23)
+#define HWCAP2_AARCH64_SME_I16I64 (1 << 24)
+#define HWCAP2_AARCH64_SME2   (1ULL << 37)
 
 static int detect_flags(void)
 {
     int flags = 0;
 
-    unsigned long hwcap = getauxval(AT_HWCAP);
-    unsigned long hwcap2 = getauxval(AT_HWCAP2);
+    unsigned long hwcap = ff_getauxval(AT_HWCAP);
+    unsigned long hwcap2 = ff_getauxval(AT_HWCAP2);
 
+    if (hwcap & HWCAP_AARCH64_CRC32)
+        flags |= AV_CPU_FLAG_ARM_CRC;
     if (hwcap & HWCAP_AARCH64_ASIMDDP)
         flags |= AV_CPU_FLAG_DOTPROD;
+    if (hwcap & HWCAP_AARCH64_SVE)
+        flags |= AV_CPU_FLAG_SVE;
+    if (hwcap2 & HWCAP2_AARCH64_SVE2)
+        flags |= AV_CPU_FLAG_SVE2;
     if (hwcap2 & HWCAP2_AARCH64_I8MM)
         flags |= AV_CPU_FLAG_I8MM;
+    if (hwcap2 & HWCAP2_AARCH64_SME)
+        flags |= AV_CPU_FLAG_SME;
+    if (hwcap2 & HWCAP2_AARCH64_SME_I16I64)
+        flags |= AV_CPU_FLAG_SME_I16I64;
+    if (hwcap2 & HWCAP2_AARCH64_SME2)
+        flags |= AV_CPU_FLAG_SME2;
 
     return flags;
 }
@@ -45,22 +63,71 @@ static int detect_flags(void)
 #elif defined(__APPLE__) && HAVE_SYSCTLBYNAME
 #include <sys/sysctl.h>
 
+static int have_feature(const char *feature) {
+    uint32_t value = 0;
+    size_t size = sizeof(value);
+    if (!sysctlbyname(feature, &value, &size, NULL, 0))
+        return value;
+    return 0;
+}
+
 static int detect_flags(void)
 {
-    uint32_t value = 0;
-    size_t size;
     int flags = 0;
 
-    size = sizeof(value);
-    if (!sysctlbyname("hw.optional.arm.FEAT_DotProd", &value, &size, NULL, 0)) {
-        if (value)
+    if (have_feature("hw.optional.arm.FEAT_DotProd"))
+        flags |= AV_CPU_FLAG_DOTPROD;
+    if (have_feature("hw.optional.arm.FEAT_I8MM"))
+        flags |= AV_CPU_FLAG_I8MM;
+    if (have_feature("hw.optional.arm.FEAT_SME"))
+        flags |= AV_CPU_FLAG_SME;
+    if (have_feature("hw.optional.arm.FEAT_SME_I16I64"))
+        flags |= AV_CPU_FLAG_SME_I16I64;
+    if (have_feature("hw.optional.armv8_crc32"))
+        flags |= AV_CPU_FLAG_ARM_CRC;
+    if (have_feature("hw.optional.arm.FEAT_SME2"))
+        flags |= AV_CPU_FLAG_SME2;
+
+    return flags;
+}
+
+#elif defined(__OpenBSD__)
+#include <machine/armreg.h>
+#include <machine/cpu.h>
+#include <sys/types.h>
+#include <sys/sysctl.h>
+
+static int detect_flags(void)
+{
+    int flags = 0;
+
+#ifdef CPU_ID_AA64ISAR0
+    int mib[2];
+    uint64_t isar0;
+    uint64_t isar1;
+    size_t len;
+
+    mib[0] = CTL_MACHDEP;
+    mib[1] = CPU_ID_AA64ISAR0;
+    len = sizeof(isar0);
+    if (sysctl(mib, 2, &isar0, &len, NULL, 0) != -1) {
+        if (ID_AA64ISAR0_DP(isar0) >= ID_AA64ISAR0_DP_IMPL)
             flags |= AV_CPU_FLAG_DOTPROD;
+        if (ID_AA64ISAR0_CRC32(isar0) >= ID_AA64ISAR0_CRC32_BASE)
+            flags |= AV_CPU_FLAG_ARM_CRC;
     }
-    size = sizeof(value);
-    if (!sysctlbyname("hw.optional.arm.FEAT_I8MM", &value, &size, NULL, 0)) {
-        if (value)
+
+    mib[0] = CTL_MACHDEP;
+    mib[1] = CPU_ID_AA64ISAR1;
+    len = sizeof(isar1);
+    if (sysctl(mib, 2, &isar1, &len, NULL, 0) != -1) {
+#ifdef ID_AA64ISAR1_I8MM_IMPL
+        if (ID_AA64ISAR1_I8MM(isar1) >= ID_AA64ISAR1_I8MM_IMPL)
             flags |= AV_CPU_FLAG_I8MM;
+#endif
     }
+#endif
+
     return flags;
 }
 
@@ -70,9 +137,37 @@ static int detect_flags(void)
 static int detect_flags(void)
 {
     int flags = 0;
+#ifdef PF_ARM_V8_CRC32_INSTRUCTIONS_AVAILABLE
+    if (IsProcessorFeaturePresent(PF_ARM_V8_CRC32_INSTRUCTIONS_AVAILABLE))
+        flags |= AV_CPU_FLAG_ARM_CRC;
+#endif
 #ifdef PF_ARM_V82_DP_INSTRUCTIONS_AVAILABLE
     if (IsProcessorFeaturePresent(PF_ARM_V82_DP_INSTRUCTIONS_AVAILABLE))
         flags |= AV_CPU_FLAG_DOTPROD;
+#endif
+#ifdef PF_ARM_V82_I8MM_INSTRUCTIONS_AVAILABLE
+    if (IsProcessorFeaturePresent(PF_ARM_V82_I8MM_INSTRUCTIONS_AVAILABLE))
+        flags |= AV_CPU_FLAG_I8MM;
+#endif
+#ifdef PF_ARM_SVE_INSTRUCTIONS_AVAILABLE
+    if (IsProcessorFeaturePresent(PF_ARM_SVE_INSTRUCTIONS_AVAILABLE))
+        flags |= AV_CPU_FLAG_SVE;
+#endif
+#ifdef PF_ARM_SVE2_INSTRUCTIONS_AVAILABLE
+    if (IsProcessorFeaturePresent(PF_ARM_SVE2_INSTRUCTIONS_AVAILABLE))
+        flags |= AV_CPU_FLAG_SVE2;
+#endif
+#ifdef PF_ARM_SME_INSTRUCTIONS_AVAILABLE
+    if (IsProcessorFeaturePresent(PF_ARM_SME_INSTRUCTIONS_AVAILABLE))
+        flags |= AV_CPU_FLAG_SME;
+#endif
+#ifdef PF_ARM_SME_I16I64_INSTRUCTIONS_AVAILABLE
+    if (IsProcessorFeaturePresent(PF_ARM_SME_I16I64_INSTRUCTIONS_AVAILABLE))
+        flags |= AV_CPU_FLAG_SME_I16I64;
+#endif
+#ifdef PF_ARM_SME2_INSTRUCTIONS_AVAILABLE
+    if (IsProcessorFeaturePresent(PF_ARM_SME2_INSTRUCTIONS_AVAILABLE))
+        flags |= AV_CPU_FLAG_SME2;
 #endif
     return flags;
 }
@@ -95,6 +190,24 @@ int ff_get_cpu_flags_aarch64(void)
 #endif
 #ifdef __ARM_FEATURE_MATMUL_INT8
     flags |= AV_CPU_FLAG_I8MM;
+#endif
+#ifdef __ARM_FEATURE_SVE
+    flags |= AV_CPU_FLAG_SVE;
+#endif
+#ifdef __ARM_FEATURE_SVE2
+    flags |= AV_CPU_FLAG_SVE2;
+#endif
+#ifdef __ARM_FEATURE_SME
+    flags |= AV_CPU_FLAG_SME;
+#endif
+#ifdef __ARM_FEATURE_CRC32
+    flags |= AV_CPU_FLAG_ARM_CRC;
+#endif
+#ifdef __ARM_FEATURE_SME_I16I64
+    flags |= AV_CPU_FLAG_SME_I16I64;
+#endif
+#ifdef __ARM_FEATURE_SME2
+    flags |= AV_CPU_FLAG_SME2;
 #endif
 
     flags |= detect_flags();

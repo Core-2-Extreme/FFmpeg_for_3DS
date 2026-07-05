@@ -33,15 +33,47 @@ typedef struct SEIRawFillerPayload {
 typedef struct SEIRawUserDataRegistered {
     uint8_t      itu_t_t35_country_code;
     uint8_t      itu_t_t35_country_code_extension_byte;
-    uint8_t     *data; ///< RefStruct reference
+    uint8_t     *data;
+    uint8_t     *data_ref; ///< RefStruct reference
     size_t       data_length;
 } SEIRawUserDataRegistered;
 
 typedef struct SEIRawUserDataUnregistered {
     uint8_t      uuid_iso_iec_11578[16];
-    uint8_t     *data; ///< RefStruct reference
+    uint8_t     *data;
+    uint8_t     *data_ref; ///< RefStruct reference
     size_t       data_length;
 } SEIRawUserDataUnregistered;
+
+typedef struct SEIRawFramePackingArrangement {
+    uint32_t fp_arrangement_id;
+    uint8_t fp_arrangement_cancel_flag;
+    uint8_t fp_arrangement_type;
+    uint8_t fp_quincunx_sampling_flag;
+    uint8_t fp_content_interpretation_type;
+    uint8_t fp_spatial_flipping_flag;
+    uint8_t fp_frame0_flipped_flag;
+    uint8_t fp_field_views_flag;
+    uint8_t fp_current_frame_is_frame0_flag;
+    uint8_t fp_frame0_self_contained_flag;
+    uint8_t fp_frame1_self_contained_flag;
+    uint8_t fp_frame0_grid_position_x;
+    uint8_t fp_frame0_grid_position_y;
+    uint8_t fp_frame1_grid_position_x;
+    uint8_t fp_frame1_grid_position_y;
+    uint8_t fp_arrangement_persistence_flag;
+    uint8_t fp_upsampled_aspect_ratio_flag;
+} SEIRawFramePackingArrangement;
+
+typedef struct SEIRawDecodedPictureHash {
+    uint8_t  dph_sei_hash_type;
+    uint8_t  dph_sei_single_component_flag;
+    uint8_t  dph_sei_picture_md5[3][16];
+    uint16_t dph_sei_picture_crc[3];
+    uint32_t dph_sei_picture_checksum[3];
+
+    uint8_t  dph_sei_reserved_zero_7bits;
+} SEIRawDecodedPictureHash;
 
 typedef struct SEIRawMasteringDisplayColourVolume {
     uint16_t display_primaries_x[3];
@@ -66,6 +98,46 @@ typedef struct SEIRawAmbientViewingEnvironment {
     uint16_t ambient_light_x;
     uint16_t ambient_light_y;
 } SEIRawAmbientViewingEnvironment;
+
+typedef struct SEIRawFilmGrainCharacteristics {
+    uint8_t      fg_characteristics_cancel_flag;
+    uint8_t      fg_model_id;
+    uint8_t      fg_separate_colour_description_present_flag;
+    uint8_t      fg_bit_depth_luma_minus8;
+    uint8_t      fg_bit_depth_chroma_minus8;
+    uint8_t      fg_full_range_flag;
+    uint8_t      fg_colour_primaries;
+    uint8_t      fg_transfer_characteristics;
+    uint8_t      fg_matrix_coeffs;
+    uint8_t      fg_blending_mode_id;
+    uint8_t      fg_log2_scale_factor;
+    uint8_t      fg_comp_model_present_flag[3];
+    uint8_t      fg_num_intensity_intervals_minus1[3];
+    uint8_t      fg_num_model_values_minus1[3];
+    uint8_t      fg_intensity_interval_lower_bound[3][256];
+    uint8_t      fg_intensity_interval_upper_bound[3][256];
+    int16_t      fg_comp_model_value[3][256][6];
+    uint8_t      fg_characteristics_persistence_flag;
+} SEIRawFilmGrainCharacteristics;
+
+typedef struct SEIRawDisplayOrientation {
+    uint8_t      display_orientation_cancel_flag;
+    uint8_t      display_orientation_persistence_flag;
+    uint8_t      display_orientation_transform_type;
+    uint8_t      display_orientation_reserved_zero_3bits;
+} SEIRawDisplayOrientation;
+
+typedef struct SEIRawFrameFieldInformation {
+    uint8_t      ffi_field_pic_flag;
+    uint8_t      ffi_bottom_field_flag;
+    uint8_t      ffi_pairing_indicated_flag;
+    uint8_t      ffi_paired_with_next_field_flag;
+    uint8_t      ffi_display_fields_from_frame_flag;
+    uint8_t      ffi_top_field_first_flag;
+    uint8_t      ffi_display_elemental_periods_minus1;
+    uint8_t      ffi_source_scan_type;
+    uint8_t      ffi_duplicate_flag;
+} SEIRawFrameFieldInformation;
 
 typedef struct SEIRawMessage {
     uint32_t     payload_type;
@@ -130,6 +202,9 @@ typedef struct SEIMessageTypeDescriptor {
 #define SEI_MESSAGE_TYPE_END { .type = -1 }
 
 
+extern const SEIMessageTypeDescriptor ff_cbs_sei_h264_types[];
+extern const SEIMessageTypeDescriptor ff_cbs_sei_h265_types[];
+
 /**
  * Find the type descriptor for the given payload type.
  *
@@ -190,5 +265,14 @@ int ff_cbs_sei_find_message(CodedBitstreamContext *ctx,
 void ff_cbs_sei_delete_message_type(CodedBitstreamContext *ctx,
                                     CodedBitstreamFragment *au,
                                     uint32_t payload_type);
+
+int ff_cbs_sei_read_message_list(CodedBitstreamContext *ctx, struct GetBitContext *rw,
+                                 SEIRawMessageList *current, int prefix);
+int ff_cbs_sei_write_message_list(CodedBitstreamContext *ctx, struct PutBitContext *rw,
+                                  SEIRawMessageList *current, int prefix);
+int ff_cbs_sei_read_message(CodedBitstreamContext *ctx, struct GetBitContext *rw,
+                            SEIRawMessage *current);
+int ff_cbs_sei_write_message(CodedBitstreamContext *ctx, struct PutBitContext *rw,
+                             SEIRawMessage *current);
 
 #endif /* AVCODEC_CBS_SEI_H */

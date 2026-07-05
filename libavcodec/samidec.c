@@ -25,8 +25,10 @@
  */
 
 #include "ass.h"
+#include "libavutil/attributes.h"
 #include "libavutil/avstring.h"
 #include "libavutil/bprint.h"
+#include "libavutil/mem.h"
 #include "codec_internal.h"
 #include "htmlsubtitles.h"
 
@@ -173,7 +175,7 @@ static av_cold int sami_close(AVCodecContext *avctx)
     return 0;
 }
 
-static void sami_flush(AVCodecContext *avctx)
+static av_cold void sami_flush(AVCodecContext *avctx)
 {
     SAMIContext *sami = avctx->priv_data;
     if (!(avctx->flags2 & AV_CODEC_FLAG2_RO_FLUSH_NOOP))

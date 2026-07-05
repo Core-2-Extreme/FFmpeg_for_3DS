@@ -18,10 +18,12 @@
  * 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA
  */
 
+#include "libavutil/attributes_internal.h"
 #include "libavutil/avstring.h"
 #include "libavutil/avassert.h"
 #include "libavutil/bprint.h"
 #include "libavutil/intreadwrite.h"
+#include "libavutil/mem.h"
 #include "libavutil/opt.h"
 #include "libavutil/parseutils.h"
 #include "libavutil/timestamp.h"
@@ -325,7 +327,7 @@ static int64_t get_best_effort_duration(ConcatFile *file, AVFormatContext *avf)
     if (file->outpoint != AV_NOPTS_VALUE)
         return av_sat_sub64(file->outpoint, file->file_inpoint);
     if (avf->duration > 0)
-        return avf->duration - (file->file_inpoint - file->file_start_time);
+        return av_sat_sub64(avf->duration, file->file_inpoint - file->file_start_time);
     if (file->next_dts != AV_NOPTS_VALUE)
         return file->next_dts - file->file_inpoint;
     return AV_NOPTS_VALUE;
@@ -418,7 +420,7 @@ static int concat_read_close(AVFormatContext *avf)
 
 typedef struct ParseSyntax {
     const char *keyword;
-    char args[MAX_ARGS];
+    attribute_nonstring char args[MAX_ARGS];
     uint8_t flags;
 } ParseSyntax;
 
@@ -636,6 +638,11 @@ static int concat_parse_script(AVFormatContext *avf)
         default:
             FAIL(AVERROR_BUG);
         }
+    }
+
+    if (!file) {
+        ret = AVERROR_INVALIDDATA;
+        goto fail;
     }
 
     if (file->inpoint != AV_NOPTS_VALUE && file->outpoint != AV_NOPTS_VALUE) {

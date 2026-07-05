@@ -22,15 +22,17 @@
 
 #include "config.h"
 
+#include "libavutil/error.h"
 #include "libavutil/intmath.h"
 #include "libavutil/intreadwrite.h"
 #include "libavutil/mem.h"
 
 #include "bytestream.h"
-#include "hevc.h"
 #include "h264.h"
 #include "h2645_parse.h"
 #include "vvc.h"
+
+#include "hevc/hevc.h"
 
 int ff_h2645_extract_rbsp(const uint8_t *src, int length,
                           H2645RBSP *rbsp, H2645NAL *nal, int small_padding)
@@ -145,6 +147,47 @@ nsc:
     rbsp->rbsp_buffer_size += si;
 
     return si;
+}
+
+static const char *const lcevc_nal_type_name[32] = {
+    "UNSPEC0", // LCEVC_UNSPEC0_NUT
+    "UNSPEC1", // LCEVC_UNSPEC1_NUT
+    "UNSPEC2", // LCEVC_UNSPEC2_NUT
+    "UNSPEC3", // LCEVC_UNSPEC3_NUT
+    "UNSPEC4", // LCEVC_UNSPEC4_NUT
+    "UNSPEC5", // LCEVC_UNSPEC5_NUT
+    "UNSPEC6", // LCEVC_UNSPEC6_NUT
+    "UNSPEC7", // LCEVC_UNSPEC7_NUT
+    "UNSPEC8", // LCEVC_UNSPEC8_NUT
+    "UNSPEC9", // LCEVC_UNSPEC9_NUT
+    "UNSPEC10", // LCEVC_UNSPEC10_NUT
+    "UNSPEC11", // LCEVC_UNSPEC11_NUT
+    "UNSPEC12", // LCEVC_UNSPEC12_NUT
+    "UNSPEC13", // LCEVC_UNSPEC13_NUT
+    "UNSPEC14", // LCEVC_UNSPEC14_NUT
+    "UNSPEC15", // LCEVC_UNSPEC15_NUT
+    "UNSPEC16", // LCEVC_UNSPEC16_NUT
+    "UNSPEC17", // LCEVC_UNSPEC17_NUT
+    "UNSPEC18", // LCEVC_UNSPEC18_NUT
+    "UNSPEC19", // LCEVC_UNSPEC19_NUT
+    "UNSPEC20", // LCEVC_UNSPEC20_NUT
+    "UNSPEC21", // LCEVC_UNSPEC21_NUT
+    "UNSPEC22", // LCEVC_UNSPEC22_NUT
+    "UNSPEC23", // LCEVC_UNSPEC23_NUT
+    "UNSPEC24", // LCEVC_UNSPEC24_NUT
+    "UNSPEC25", // LCEVC_UNSPEC25_NUT
+    "UNSPEC26", // LCEVC_UNSPEC26_NUT
+    "UNSPEC27", // LCEVC_UNSPEC27_NUT
+    "NON_IDR_NUT", //LCEVC_NON_IDR_NUT
+    "IDR_NUT", // LCEVC_IDR_NUT
+    "RSV_NUT", // LCEVC_RSV_NUT
+    "UNSPEC31", // LCEVC_UNSPEC31_NUT
+};
+
+static const char *lcevc_nal_unit_name(int nal_type)
+{
+    av_assert0(nal_type >= 0 && nal_type < 32);
+    return lcevc_nal_type_name[nal_type];
 }
 
 static const char *const vvc_nal_type_name[32] = {
@@ -336,6 +379,26 @@ static int get_bit_length(H2645NAL *nal, int min_size, int skip_trailing_zeros)
  * @return AVERROR_INVALIDDATA if the packet is not a valid NAL unit,
  * 0 otherwise
  */
+
+static int lcevc_parse_nal_header(H2645NAL *nal, void *logctx)
+{
+    GetBitContext *gb = &nal->gb;
+
+    if (get_bits1(gb) != 0)     //forbidden_zero_bit
+        return AVERROR_INVALIDDATA;
+
+    if (get_bits1(gb) != 1)     //forbidden_one_bit
+        return AVERROR_INVALIDDATA;
+
+    nal->type = get_bits(gb, 5);
+
+    av_log(logctx, AV_LOG_DEBUG,
+           "nal_unit_type: %d(%s)\n",
+           nal->type, lcevc_nal_unit_name(nal->type));
+
+    return 0;
+}
+
 static int vvc_parse_nal_header(H2645NAL *nal, void *logctx)
 {
     GetBitContext *gb = &nal->gb;
@@ -462,16 +525,16 @@ fail:
 }
 
 int ff_h2645_packet_split(H2645Packet *pkt, const uint8_t *buf, int length,
-                          void *logctx, int is_nalff, int nal_length_size,
-                          enum AVCodecID codec_id, int small_padding, int use_ref)
+                          void *logctx, int nal_length_size,
+                          enum AVCodecID codec_id, int flags)
 {
     GetByteContext bc;
     int consumed, ret = 0;
-    int next_avc = is_nalff ? 0 : length;
-    int64_t padding = small_padding ? 0 : MAX_MBPAIR_SIZE;
+    int next_avc = (flags & H2645_FLAG_IS_NALFF) ? 0 : length;
+    int64_t padding = (flags & H2645_FLAG_SMALL_PADDING) ? 0 : MAX_MBPAIR_SIZE;
 
     bytestream2_init(&bc, buf, length);
-    alloc_rbsp_buffer(&pkt->rbsp, length + padding, use_ref);
+    alloc_rbsp_buffer(&pkt->rbsp, length + padding, !!(flags & H2645_FLAG_USE_REF));
 
     if (!pkt->rbsp.rbsp_buffer)
         return AVERROR(ENOMEM);
@@ -548,11 +611,12 @@ int ff_h2645_packet_split(H2645Packet *pkt, const uint8_t *buf, int length,
         }
         nal = &pkt->nals[pkt->nb_nals];
 
-        consumed = ff_h2645_extract_rbsp(bc.buffer, extract_length, &pkt->rbsp, nal, small_padding);
+        consumed = ff_h2645_extract_rbsp(bc.buffer, extract_length, &pkt->rbsp, nal,
+                                         !!(flags & H2645_FLAG_SMALL_PADDING));
         if (consumed < 0)
             return consumed;
 
-        if (is_nalff && (extract_length != consumed) && extract_length)
+        if ((flags & H2645_FLAG_IS_NALFF) && (extract_length != consumed) && extract_length)
             av_log(logctx, AV_LOG_DEBUG,
                    "NALFF: Consumed only %d bytes instead of %d\n",
                    consumed, extract_length);
@@ -579,13 +643,18 @@ int ff_h2645_packet_split(H2645Packet *pkt, const uint8_t *buf, int length,
 
         if (codec_id == AV_CODEC_ID_VVC)
             ret = vvc_parse_nal_header(nal, logctx);
-        else if (codec_id == AV_CODEC_ID_HEVC)
+        else if (codec_id == AV_CODEC_ID_LCEVC)
+            ret = lcevc_parse_nal_header(nal, logctx);
+        else if (codec_id == AV_CODEC_ID_HEVC) {
             ret = hevc_parse_nal_header(nal, logctx);
-        else
+            if (nal->nuh_layer_id == 63)
+                continue;
+        } else
             ret = h264_parse_nal_header(nal, logctx);
         if (ret < 0) {
-            av_log(logctx, AV_LOG_WARNING, "Invalid NAL unit %d, skipping.\n",
-                   nal->type);
+            av_log(logctx, AV_LOG_WARNING,
+                   "Failed to parse header of NALU (type %d): \"%s\". Skipping NALU.\n",
+                   nal->type, av_err2str(ret));
             continue;
         }
 

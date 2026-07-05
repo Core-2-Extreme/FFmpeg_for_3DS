@@ -27,6 +27,7 @@
 
 #include "libavutil/channel_layout.h"
 #include "libavutil/intreadwrite.h"
+#include "libavutil/mem.h"
 
 #include "avformat.h"
 #include "demux.h"
@@ -216,7 +217,7 @@ static int read_packet(AVFormatContext *s, AVPacket *pkt)
     if (s->pb->eof_reached)
         return AVERROR_EOF;
 
-    return AVERROR(EIO);
+    return AVERROR_INVALIDDATA;
 }
 
 static int read_seek(AVFormatContext *s, int stream_index,

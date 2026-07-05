@@ -32,6 +32,7 @@
 #include "internal.h"
 #include "libavutil/imgutils.h"
 #include "libavutil/intreadwrite.h"
+#include "libavutil/mem.h"
 #include "libavutil/opt.h"
 #include "libavcodec/apng.h"
 #include "libavcodec/png.h"
@@ -343,12 +344,15 @@ static int apng_read_packet(AVFormatContext *s, AVPacket *pkt)
         if ((ret = decode_fctl_chunk(s, ctx, pkt)) < 0)
             return ret;
 
-        /* fcTL must precede fdAT or IDAT */
+        /* fcTL may be followed by other chunks before fdAT or IDAT */
         len = avio_rb32(pb);
         tag = avio_rl32(pb);
-        if (len > 0x7fffffff ||
-            tag != MKTAG('f', 'd', 'A', 'T') &&
-            tag != MKTAG('I', 'D', 'A', 'T'))
+        if (len > 0x7fffffff)
+            return AVERROR_INVALIDDATA;
+
+        /* check for empty frame */
+        if (tag == MKTAG('f', 'c', 'T', 'L') ||
+            tag == MKTAG('I', 'E', 'N', 'D'))
             return AVERROR_INVALIDDATA;
 
         size = 38 /* fcTL */ + 8 /* len, tag */ + len + 4 /* crc */;

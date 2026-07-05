@@ -30,6 +30,7 @@
 #include "bytestream.h"
 #include "defs.h"
 #include "h264.h"
+#include "sei.h"
 
 typedef struct H264BSFContext {
     uint8_t *sps;
@@ -91,6 +92,11 @@ static int h264_extradata_to_annexb(AVBSFContext *ctx,
     static const uint8_t nalu_header[4] = { 0, 0, 0, 1 };
     const int padding                   = AV_INPUT_BUFFER_PADDING_SIZE;
     int length_size, pps_offset = 0;
+
+    if (extradata_size < 7) {
+        av_log(ctx, AV_LOG_ERROR, "Invalid extradata size: %d\n", extradata_size);
+        return AVERROR_INVALIDDATA;
+    }
 
     bytestream2_init(gb, extradata, extradata_size);
 
@@ -208,6 +214,49 @@ static int h264_mp4toannexb_save_ps(uint8_t **dst, int *dst_size,
     return 0;
 }
 
+static int h264_mp4toannexb_filter_ps(H264BSFContext *s,
+                                      const uint8_t *buf,
+                                      const uint8_t *buf_end)
+{
+    int sps_count = 0;
+    int pps_count = 0;
+    uint8_t unit_type;
+
+    do {
+        uint32_t nal_size = 0;
+
+        /* possible overread ok due to padding */
+        for (int i = 0; i < s->length_size; i++)
+            nal_size = (nal_size << 8) | buf[i];
+
+        buf += s->length_size;
+
+        /* This check requires the cast as the right side might
+         * otherwise be promoted to an unsigned value. */
+        if ((int64_t)nal_size > buf_end - buf)
+            return AVERROR_INVALIDDATA;
+
+        if (!nal_size)
+            continue;
+
+        unit_type = *buf & 0x1f;
+
+        if (unit_type == H264_NAL_SPS) {
+            h264_mp4toannexb_save_ps(&s->sps, &s->sps_size, &s->sps_buf_size, buf,
+                                   nal_size, !sps_count);
+            sps_count++;
+        } else if (unit_type == H264_NAL_PPS) {
+            h264_mp4toannexb_save_ps(&s->pps, &s->pps_size, &s->pps_buf_size, buf,
+                                   nal_size, !pps_count);
+            pps_count++;
+        }
+
+        buf += nal_size;
+    } while (buf < buf_end);
+
+    return 0;
+}
+
 static int h264_mp4toannexb_init(AVBSFContext *ctx)
 {
     int extra_size = ctx->par_in->extradata_size;
@@ -218,16 +267,11 @@ static int h264_mp4toannexb_init(AVBSFContext *ctx)
         (extra_size >= 4 && AV_RB32(ctx->par_in->extradata) == 1)) {
         av_log(ctx, AV_LOG_VERBOSE,
                "The input looks like it is Annex B already\n");
-    } else if (extra_size >= 7) {
-        return h264_extradata_to_annexb(ctx,
-                                        ctx->par_in->extradata,
-                                        ctx->par_in->extradata_size);
-    } else {
-        av_log(ctx, AV_LOG_ERROR, "Invalid extradata size: %d\n", extra_size);
-        return AVERROR_INVALIDDATA;
+        return 0;
     }
-
-    return 0;
+    return h264_extradata_to_annexb(ctx,
+                                    ctx->par_in->extradata,
+                                    ctx->par_in->extradata_size);
 }
 
 static int h264_mp4toannexb_filter(AVBSFContext *ctx, AVPacket *opkt)
@@ -249,10 +293,12 @@ static int h264_mp4toannexb_filter(AVBSFContext *ctx, AVPacket *opkt)
 
     extradata = av_packet_get_side_data(in, AV_PKT_DATA_NEW_EXTRADATA,
                                         &extradata_size);
-    if (extradata) {
+    if (extradata && extradata[0] == 1) {
         ret = h264_extradata_to_annexb(ctx, extradata, extradata_size);
         if (ret < 0)
             goto fail;
+        av_packet_side_data_remove(in->side_data, &in->side_data_elems,
+                                   AV_PKT_DATA_NEW_EXTRADATA);
     }
 
     /* nothing to filter */
@@ -263,14 +309,14 @@ static int h264_mp4toannexb_filter(AVBSFContext *ctx, AVPacket *opkt)
     }
 
     buf_end  = in->data + in->size;
+    ret = h264_mp4toannexb_filter_ps(s, in->data, buf_end);
+    if (ret < 0)
+        goto fail;
 
 #define LOG_ONCE(...) \
     if (j) \
         av_log(__VA_ARGS__)
     for (int j = 0; j < 2; j++) {
-        int sps_count = 0;
-        int pps_count = 0;
-
         buf      = in->data;
         new_idr  = s->new_idr;
         sps_seen = s->idr_sps_seen;
@@ -301,18 +347,8 @@ static int h264_mp4toannexb_filter(AVBSFContext *ctx, AVPacket *opkt)
 
             if (unit_type == H264_NAL_SPS) {
                 sps_seen = new_idr = 1;
-                if (!j) {
-                    h264_mp4toannexb_save_ps(&s->sps, &s->sps_size, &s->sps_buf_size,
-                                             buf, nal_size, !sps_count);
-                    sps_count++;
-                }
             } else if (unit_type == H264_NAL_PPS) {
                 pps_seen = new_idr = 1;
-                if (!j) {
-                    h264_mp4toannexb_save_ps(&s->pps, &s->pps_size, &s->pps_buf_size,
-                                             buf, nal_size, !pps_count);
-                    pps_count++;
-                }
                 /* if SPS has not been seen yet, prepend the AVCC one to PPS */
                 if (!sps_seen) {
                     if (!s->sps_size) {
@@ -329,6 +365,20 @@ static int h264_mp4toannexb_filter(AVBSFContext *ctx, AVPacket *opkt)
              * This could be checking idr_pic_id instead, but would complexify the parsing. */
             if (!new_idr && unit_type == H264_NAL_IDR_SLICE && (buf[1] & 0x80))
                 new_idr = 1;
+
+            /* If this is a buffering period SEI without a corresponding sps/pps
+             * then prepend any existing sps/pps before the SEI */
+            if (unit_type == H264_NAL_SEI && buf[1] == SEI_TYPE_BUFFERING_PERIOD &&
+                !sps_seen && !pps_seen) {
+                if (s->sps_size) {
+                    count_or_copy(&out, &out_size, s->sps, s->sps_size, PS_OUT_OF_BAND, j);
+                    sps_seen = 1;
+                }
+                if (s->pps_size) {
+                    count_or_copy(&out, &out_size, s->pps, s->pps_size, PS_OUT_OF_BAND, j);
+                    pps_seen = 1;
+                }
+            }
 
             /* prepend only to the first type 5 NAL unit of an IDR picture, if no sps/pps are already present */
             if (new_idr && unit_type == H264_NAL_IDR_SLICE && !sps_seen && !pps_seen) {

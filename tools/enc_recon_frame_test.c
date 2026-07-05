@@ -28,10 +28,12 @@
 #include "decode_simple.h"
 
 #include "libavutil/adler32.h"
+#include "libavutil/avassert.h"
 #include "libavutil/common.h"
 #include "libavutil/error.h"
 #include "libavutil/frame.h"
 #include "libavutil/imgutils.h"
+#include "libavutil/mem.h"
 #include "libavutil/opt.h"
 
 #include "libavformat/avformat.h"
@@ -88,6 +90,8 @@ static int frame_hash(FrameChecksum **pc, size_t *nb_c, int64_t ts,
         int linesize = av_image_get_linesize(frame->format, frame->width, p);
         uint32_t checksum = 0;
 
+        av_assert0(linesize >= 0);
+
         for (int j = 0; j < frame->height >> shift_v[p]; j++) {
             checksum = av_adler32_update(checksum, data, linesize);
             data += frame->linesize[p];
@@ -110,7 +114,7 @@ static int recon_frame_process(PrivData *pd, const AVPacket *pkt)
         return ret;
     }
 
-    // the encoder's internal format (in which the reconsturcted frames are
+    // the encoder's internal format (in which the reconstructed frames are
     // exported) may be different from the user-facing pixel format
     if (f->format != pd->enc->pix_fmt) {
         if (!pd->scaler) {
@@ -174,6 +178,8 @@ static int process_frame(DecodeContext *dc, AVFrame *frame)
     }
 
     ret = avcodec_send_frame(pd->enc, frame);
+    if (ret == AVERROR_EOF && !frame)
+        return 0;
     if (ret < 0) {
         fprintf(stderr, "Error submitting a frame for encoding\n");
         return ret;
@@ -236,7 +242,7 @@ static int process_frame(DecodeContext *dc, AVFrame *frame)
             else if (ret == AVERROR_EOF)
                 return 0;
             else if (ret < 0) {
-                fprintf(stderr, "Error receving a frame from decoder\n");
+                fprintf(stderr, "Error receiving a frame from decoder\n");
                 return ret;
             }
 

@@ -140,7 +140,7 @@ static int mux_fixup_ts(Muxer *mux, MuxStream *ms, AVPacket *pkt)
     OutputStream *ost = &ms->ost;
 
 #if FFMPEG_OPT_VSYNC_DROP
-    if (ost->type == AVMEDIA_TYPE_VIDEO && ost->vsync_method == VSYNC_DROP)
+    if (ost->type == AVMEDIA_TYPE_VIDEO && ms->ts_drop)
         pkt->pts = pkt->dts = AV_NOPTS_VALUE;
 #endif
 
@@ -290,7 +290,7 @@ static int mux_packet_filter(Muxer *mux, MuxThreadContext *mt,
 {
     MuxStream *ms = ms_from_ost(ost);
     const char *err_msg;
-    int ret = 0;
+    int ret;
 
     if (pkt && !ost->enc) {
         ret = of_streamcopy(&mux->of, ost, pkt);
@@ -299,7 +299,6 @@ static int mux_packet_filter(Muxer *mux, MuxThreadContext *mt,
         else if (ret == AVERROR_EOF) {
             av_packet_unref(pkt);
             pkt = NULL;
-            ret = 0;
             *stream_eof = 1;
         } else if (ret < 0)
             goto fail;
@@ -370,10 +369,11 @@ fail:
     return ret;
 }
 
-static void thread_set_name(OutputFile *of)
+static void thread_set_name(Muxer *mux)
 {
     char name[16];
-    snprintf(name, sizeof(name), "mux%d:%s", of->index, of->format->name);
+    snprintf(name, sizeof(name), "mux%d:%s",
+             mux->of.index, mux->fc->oformat->name);
     ff_thread_setname(name);
 }
 
@@ -417,7 +417,7 @@ int muxer_thread(void *arg)
     if (ret < 0)
         goto finish;
 
-    thread_set_name(of);
+    thread_set_name(mux);
 
     while (1) {
         OutputStream *ost;
@@ -515,8 +515,10 @@ int print_sdp(const char *filename)
     if (!avc)
         return AVERROR(ENOMEM);
     for (int i = 0; i < nb_output_files; i++) {
-        if (!strcmp(output_files[i]->format->name, "rtp")) {
-            avc[j] = mux_from_of(output_files[i])->fc;
+        Muxer *mux = mux_from_of(output_files[i]);
+
+        if (!strcmp(mux->fc->oformat->name, "rtp")) {
+            avc[j] = mux->fc;
             j++;
         }
     }
@@ -579,9 +581,9 @@ static int bsf_init(MuxStream *ms)
     int ret;
 
     if (!ctx)
-        return avcodec_parameters_copy(ost->st->codecpar, ost->par_in);
+        return avcodec_parameters_copy(ost->st->codecpar, ms->par_in);
 
-    ret = avcodec_parameters_copy(ctx->par_in, ost->par_in);
+    ret = avcodec_parameters_copy(ctx->par_in, ms->par_in);
     if (ret < 0)
         return ret;
 
@@ -606,11 +608,28 @@ static int bsf_init(MuxStream *ms)
     return 0;
 }
 
-int of_stream_init(OutputFile *of, OutputStream *ost)
+int of_stream_init(OutputFile *of, OutputStream *ost,
+                   const AVCodecContext *enc_ctx)
 {
     Muxer *mux = mux_from_of(of);
     MuxStream *ms = ms_from_ost(ost);
     int ret;
+
+    if (enc_ctx) {
+        // use upstream time base unless it has been overridden previously
+        if (ost->st->time_base.num <= 0 || ost->st->time_base.den <= 0)
+            ost->st->time_base = av_add_q(enc_ctx->time_base, (AVRational){0, 1});
+
+        ost->st->avg_frame_rate = enc_ctx->framerate;
+        ost->st->sample_aspect_ratio = enc_ctx->sample_aspect_ratio;
+
+        ret = avcodec_parameters_from_context(ms->par_in, enc_ctx);
+        if (ret < 0) {
+            av_log(ost, AV_LOG_FATAL,
+                   "Error initializing the output stream codec parameters.\n");
+            return ret;
+        }
+    }
 
     /* initialize bitstream filters for the output stream
      * needs to be done here, because the codec id for streamcopy is not
@@ -642,8 +661,8 @@ static int check_written(OutputFile *of)
 
         total_packets_written += packets_written;
 
-        if (ost->enc_ctx &&
-            (ost->enc_ctx->flags & (AV_CODEC_FLAG_PASS1 | AV_CODEC_FLAG_PASS2))
+        if (ost->enc &&
+            (ost->enc->enc_ctx->flags & (AV_CODEC_FLAG_PASS1 | AV_CODEC_FLAG_PASS2))
              != AV_CODEC_FLAG_PASS1)
             pass1_used = 0;
 
@@ -704,9 +723,9 @@ static void mux_final_stats(Muxer *mux)
                of->index, j, av_get_media_type_string(type));
         if (ost->enc) {
             av_log(of, AV_LOG_VERBOSE, "%"PRIu64" frames encoded",
-                   ost->frames_encoded);
+                   ost->enc->frames_encoded);
             if (type == AVMEDIA_TYPE_AUDIO)
-                av_log(of, AV_LOG_VERBOSE, " (%"PRIu64" samples)", ost->samples_encoded);
+                av_log(of, AV_LOG_VERBOSE, " (%"PRIu64" samples)", ost->enc->samples_encoded);
             av_log(of, AV_LOG_VERBOSE, "; ");
         }
 
@@ -756,7 +775,7 @@ int of_write_trailer(OutputFile *of)
 
     mux->last_filesize = filesize(fc->pb);
 
-    if (!(of->format->flags & AVFMT_NOFILE)) {
+    if (!(fc->oformat->flags & AVFMT_NOFILE)) {
         ret = avio_closep(&fc->pb);
         if (ret < 0) {
             av_log(mux, AV_LOG_ERROR, "Error closing file: %s\n", av_err2str(ret));
@@ -794,6 +813,7 @@ static void ost_free(OutputStream **post)
     ms = ms_from_ost(ost);
 
     enc_free(&ost->enc);
+    fg_free(&ost->fg_simple);
 
     if (ost->logfile) {
         if (fclose(ost->logfile))
@@ -803,28 +823,19 @@ static void ost_free(OutputStream **post)
         ost->logfile = NULL;
     }
 
-    avcodec_parameters_free(&ost->par_in);
+    avcodec_parameters_free(&ms->par_in);
 
     av_bsf_free(&ms->bsf_ctx);
     av_packet_free(&ms->bsf_pkt);
 
     av_packet_free(&ms->pkt);
-    av_dict_free(&ost->encoder_opts);
 
     av_freep(&ost->kf.pts);
     av_expr_free(ost->kf.pexpr);
 
     av_freep(&ost->logfile_prefix);
-    av_freep(&ost->apad);
 
     av_freep(&ost->attachment_filename);
-
-    av_dict_free(&ost->sws_dict);
-    av_dict_free(&ost->swr_opts);
-
-    if (ost->enc_ctx)
-        av_freep(&ost->enc_ctx->stats_in);
-    avcodec_free_context(&ost->enc_ctx);
 
     enc_stats_uninit(&ost->enc_stats_pre);
     enc_stats_uninit(&ost->enc_stats_post);
@@ -865,6 +876,7 @@ void of_free(OutputFile **pof)
     av_freep(&mux->sch_stream_idx);
 
     av_dict_free(&mux->opts);
+    av_dict_free(&mux->enc_opts_used);
 
     av_packet_free(&mux->sq_pkt);
 
