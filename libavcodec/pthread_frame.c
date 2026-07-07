@@ -258,6 +258,7 @@ __attribute__((weak)) void frame_worker_thread_end(const void* frame_handle)
 attribute_align_arg void *frame_worker_thread(void *arg);
 attribute_align_arg void *frame_worker_thread(void *arg)
 {
+    uint8_t was_counter_started = 0;
     PerThreadContext *p = arg;
     AVCodecContext *avctx = p->avctx;
     const FFCodec *codec = ffcodec(avctx->codec);
@@ -303,11 +304,18 @@ attribute_align_arg void *frame_worker_thread(void *arg)
             }
 
             /* do the actual decoding */
-            frame_worker_thread_start(p);
+            if(!was_counter_started)
+            {
+                frame_worker_thread_start(p);
+                was_counter_started = 1;
+            }
             ret = ff_decode_receive_frame_internal(avctx, frame);
-            frame_worker_thread_end(p);
             if (ret == 0)
+            {
                 p->df.nb_f++;
+                frame_worker_thread_end(p);
+                was_counter_started = 0;
+            }
             else if (ret < 0 && frame->buf[0])
                 av_frame_unref(frame);
 
